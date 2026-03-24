@@ -1,0 +1,44 @@
+{
+  "name": "@criterionx/trading-engine",
+  "version": "0.1.0",
+  "description": "Algorithmic trading intelligence engine — microstructure analysis, order flow, ML predictions",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "backtest": "tsx src/backtest/runner.ts",
+    "live": "tsx src/live.ts",
+    "live:headless": "tsx src/live.ts -- --no-dashboard",
+    "optimize": "tsx scripts/optimize.ts",
+    "download": "tsx scripts/download-bulk.ts",
+    "capture": "tsx scripts/capture-book.ts",
+    "download:api": "tsx scripts/download-data.ts",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@criterionx/core": "^0.3.5",
+    "decimal.js": "^10.4.3",
+    "eventemitter3": "^5.0.1",
+    "ioredis": "^5.4.1",
+    "p-queue": "^8.0.1",
+    "pino": "^9.5.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "pino-pretty": "^13.1.3",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
