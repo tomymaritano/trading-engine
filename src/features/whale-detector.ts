@@ -268,13 +268,14 @@ export class WhaleDetector {
       if (cluster.length > maxCluster.length) maxCluster = cluster;
     }
 
-    if (maxCluster.length < 15) return; // not enough trades at same price
+    if (maxCluster.length < 30) return; // need 30+ trades at same price (was 15, too noisy)
 
-    // Check that there's opposing flow (trades on both sides)
+    // Check that there's significant opposing flow (trades on both sides)
     const buys = maxCluster.filter((t) => t.side === "buy").length;
     const sells = maxCluster.filter((t) => t.side === "sell").length;
+    const minSide = Math.min(buys, sells);
 
-    if (buys === 0 || sells === 0) return; // one-sided, not absorption
+    if (minSide < 5) return; // need real opposition, not just 1-2 trades
 
     const dominantSide = buys > sells ? "buy" : "sell";
     const totalNotional = maxCluster.reduce((sum, t) => sum + t.notional, 0);

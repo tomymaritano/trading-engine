@@ -105,7 +105,7 @@ export class TradeJournal {
     });
 
     bus.on("feature:anomaly", (data) => {
-      if (data.severity > 0.5) {
+      if (data.severity > 0.7) { // was 0.5, too noisy
         this.write("anomaly", data);
       }
     });

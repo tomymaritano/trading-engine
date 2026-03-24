@@ -144,7 +144,7 @@ export function startDashboardServer(port = 3001): void {
   });
 
   bus.on("feature:anomaly", (anomaly) => {
-    if (anomaly.type.startsWith("whale_")) {
+    if (anomaly.type.startsWith("whale_") && anomaly.severity > 0.4) { // filter low-quality events
       const event = {
         ts: Date.now(),
         symbol: anomaly.symbol,
