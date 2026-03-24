@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "backtest": "tsx src/backtest/runner.ts",
     "live": "tsx src/live.ts",
+    "live:futures": "tsx src/live.ts -- --futures --exchanges binance",
     "live:headless": "tsx src/live.ts -- --no-dashboard",
     "optimize": "tsx scripts/optimize.ts",
     "download": "tsx scripts/download-bulk.ts",

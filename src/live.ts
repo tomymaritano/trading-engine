@@ -34,6 +34,7 @@ import { loadConfig } from "./config/index.js";
 import { bus } from "./utils/event-bus.js";
 import { createChildLogger } from "./utils/logger.js";
 import { BinanceAdapter } from "./adapters/binance.js";
+import { BinanceFuturesAdapter } from "./adapters/binance-futures.js";
 import { KrakenAdapter } from "./adapters/kraken.js";
 import { OkxAdapter } from "./adapters/okx.js";
 import { orderBookManager } from "./stream/order-book-manager.js";
@@ -53,6 +54,7 @@ import { startDashboardServer } from "./api/ws-server.js";
 import { startControlApi } from "./api/control-api.js";
 import { TrailingStopManager } from "./execution/trailing-stop.js";
 import { TradeJournal } from "./audit/trade-journal.js";
+import { TelegramAlerts } from "./alerts/telegram.js";
 import type { WsManager } from "./ingestion/ws-manager.js";
 import type { Exchange, MarketEvent } from "./types/market.js";
 
@@ -69,6 +71,7 @@ function getArg(name: string, def: string): string {
 const exchangeList = getArg("exchanges", "binance").split(",") as Exchange[];
 const symbolList = getArg("symbols", "BTC-USDT,ETH-USDT").split(",");
 const showDashboard = !args.includes("--no-dashboard");
+const useFutures = args.includes("--futures");
 const metricsPort = Number(getArg("metrics-port", "9090"));
 const initialEquity = Number(getArg("equity", "10000"));
 const mlUrl = getArg("ml-url", "http://localhost:8000");
@@ -85,6 +88,7 @@ async function main(): Promise<void> {
 ╠══════════════════════════════════════════════════════╣
 ║  Exchanges:  ${exchangeList.join(", ").padEnd(39)}║
 ║  Symbols:    ${symbolList.join(", ").padEnd(39)}║
+║  Mode:       ${(useFutures ? "FUTURES" : "SPOT").padEnd(39)}║
 ║  Equity:     $${initialEquity.toLocaleString().padEnd(38)}║
 ║  Metrics:    :${String(metricsPort).padEnd(38)}║
 ╚══════════════════════════════════════════════════════╝
@@ -103,10 +107,14 @@ async function main(): Promise<void> {
 
   // ── WebSocket adapters ──────────────────────────────────────────
   const adapters = {
-    binance: new BinanceAdapter(),
+    binance: useFutures ? new BinanceFuturesAdapter() : new BinanceAdapter(),
     kraken: new KrakenAdapter(),
     okx: new OkxAdapter(),
   };
+
+  if (useFutures) {
+    log.info("Using Binance USD-M Futures (lower fees, liquidation data, funding rates)");
+  }
 
   const wsManagers: WsManager[] = [];
 
@@ -180,6 +188,10 @@ async function main(): Promise<void> {
   // ── Trailing Stops ─────────────────────────────────────────────
   const trailingStopManager = new TrailingStopManager(0.01, 0.005); // 1% trail, 0.5% activation
   trailingStopManager.start();
+
+  // ── Telegram Alerts ────────────────────────────────────────────
+  const telegramAlerts = new TelegramAlerts();
+  telegramAlerts.start();
 
   // ── Trade Journal (audit trail) ───────────────────────────────
   const tradeJournal = new TradeJournal("data/journal");
