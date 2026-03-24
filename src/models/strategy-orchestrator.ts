@@ -28,6 +28,7 @@ const log = createChildLogger("strategy-orchestrator");
  */
 export class StrategyOrchestrator {
   private strategies: Strategy[] = [];
+  private disabledStrategies = new Set<string>();
   private signalCount = 0;
 
   constructor(private config: AppConfig) {
@@ -74,6 +75,8 @@ export class StrategyOrchestrator {
     const signals: TradingSignal[] = [];
 
     for (const strategy of this.strategies) {
+      // Skip disabled strategies
+      if (this.disabledStrategies.has(strategy.name)) continue;
       // Skip strategies that shouldn't run in current regime
       if (!strategy.isActiveInRegime(features.regime)) continue;
 
@@ -149,6 +152,24 @@ export class StrategyOrchestrator {
     }
 
     return base;
+  }
+
+  /** Toggle a strategy on/off at runtime */
+  toggleStrategy(name: string, enabled: boolean): void {
+    if (enabled) {
+      this.disabledStrategies.delete(name);
+    } else {
+      this.disabledStrategies.add(name);
+    }
+    log.info({ strategy: name, enabled }, "Strategy toggled");
+  }
+
+  /** Get list of strategies with enabled state */
+  getStrategies(): Array<{ name: string; enabled: boolean }> {
+    return this.strategies.map((s) => ({
+      name: s.name,
+      enabled: !this.disabledStrategies.has(s.name),
+    }));
   }
 
   get stats() {

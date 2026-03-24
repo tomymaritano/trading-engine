@@ -39,6 +39,7 @@ export class TradeJournal {
   private currentDate = "";
   private entryCount = 0;
   private baseDir: string;
+  private recentEntries: JournalEntry[] = [];
 
   constructor(baseDir = "data/journal") {
     this.baseDir = baseDir;
@@ -136,6 +137,10 @@ export class TradeJournal {
 
     this.stream?.write(JSON.stringify(entry) + "\n");
     this.entryCount++;
+
+    // Keep last 200 entries in memory for API access
+    this.recentEntries.push(entry);
+    if (this.recentEntries.length > 200) this.recentEntries.shift();
   }
 
   /** Rotate to a new file each day */
@@ -147,6 +152,11 @@ export class TradeJournal {
     this.currentDate = date;
     const filePath = join(this.baseDir, `${date}.ndjson`);
     this.stream = createWriteStream(filePath, { flags: "a" });
+  }
+
+  /** Get recent journal entries for the API */
+  getRecent(limit = 50): JournalEntry[] {
+    return this.recentEntries.slice(-limit).reverse();
   }
 
   get stats() {

@@ -50,6 +50,7 @@ import { TickStore } from "./storage/tick-store.js";
 import { TerminalDashboard } from "./dashboard/terminal.js";
 import { startMetricsCollection, startMetricsServer } from "./utils/metrics.js";
 import { startDashboardServer } from "./api/ws-server.js";
+import { startControlApi } from "./api/control-api.js";
 import { TrailingStopManager } from "./execution/trailing-stop.js";
 import { TradeJournal } from "./audit/trade-journal.js";
 import type { WsManager } from "./ingestion/ws-manager.js";
@@ -190,6 +191,30 @@ async function main(): Promise<void> {
 
   // ── Dashboard WebSocket Server ──────────────────────────────────
   startDashboardServer(3001);
+
+  // ── Control API (REST for dashboard) ──────────────────────────
+  let activeRiskProfile = "moderate";
+  let activeSignalProfile = "balanced";
+
+  startControlApi(3002, {
+    getStatus: () => ({
+      uptime: Date.now() - startTs,
+      ticks: tickCount,
+      equity: portfolioManager.equityValue(),
+      positions: portfolioManager.snapshot().positionCount,
+      signals: strategyOrchestrator.stats.signalCount,
+      trades: executionEngine.stats.filled,
+      riskProfile: activeRiskProfile,
+      signalProfile: activeSignalProfile,
+      connections: Object.fromEntries(wsManagers.map((ws) => [ws.stats.exchange, ws.stats.connected])),
+    }),
+    setRiskProfile: (name) => { activeRiskProfile = name; },
+    setSignalProfile: (name) => { activeSignalProfile = name; },
+    toggleStrategy: (name, enabled) => strategyOrchestrator.toggleStrategy(name, enabled),
+    getStrategies: () => strategyOrchestrator.getStrategies(),
+    getJournal: (limit) => tradeJournal.getRecent?.(limit) ?? [],
+    getActiveSymbols: () => symbolList,
+  });
 
   // ── Terminal Dashboard ──────────────────────────────────────────
   let dashboard: TerminalDashboard | null = null;
