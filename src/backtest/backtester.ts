@@ -96,7 +96,7 @@ export class Backtester {
         const shouldExit =
           holdingMs >= openPosition.signal.horizon * 1000 || // TTL expired
           this.shouldStopLoss(openPosition, f) ||
-          this.shouldTakeProfit(openPosition, f);
+          this.shouldTakeProfit({ ...openPosition, entryTs: openPosition.entryTs }, f);
 
         if (shouldExit) {
           const exitPrice = this.simulateExitPrice(f, openPosition.signal.direction);
@@ -196,24 +196,49 @@ export class Backtester {
     return direction === "long" ? mid - slippage - fee : mid + slippage + fee;
   }
 
+  /**
+   * Adaptive stop loss: uses realized volatility to set stop distance.
+   * In high vol, wider stops. In low vol, tighter stops.
+   * Minimum 0.3%, maximum 2%.
+   */
   private shouldStopLoss(
     pos: { entryPrice: number; signal: TradingSignal },
     f: FeatureVector,
   ): boolean {
     const mid = f.midPrice || f.vwap;
     const pctMove = (mid - pos.entryPrice) / pos.entryPrice;
-    const stopPct = 0.005; // 0.5% stop loss
-    return pos.signal.direction === "long" ? pctMove < -stopPct : pctMove > stopPct;
+    // Stop = 2x realized vol, clamped to [0.3%, 2%]
+    const volBasedStop = Math.max(0.003, Math.min(0.02, f.realizedVol * 2));
+    return pos.signal.direction === "long" ? pctMove < -volBasedStop : pctMove > volBasedStop;
   }
 
+  /**
+   * Take profit using ROI table logic:
+   * - Early: need bigger profit (0.8%)
+   * - Later: accept smaller profit (0.1%)
+   * - Very late: close at breakeven
+   */
   private shouldTakeProfit(
-    pos: { entryPrice: number; signal: TradingSignal },
+    pos: { entryPrice: number; signal: TradingSignal; entryTs?: number },
     f: FeatureVector,
   ): boolean {
     const mid = f.midPrice || f.vwap;
-    const pctMove = (mid - pos.entryPrice) / pos.entryPrice;
-    const tpPct = pos.signal.expectedReturn * 1.5; // 1.5x expected return
-    return pos.signal.direction === "long" ? pctMove > tpPct : pctMove < -tpPct;
+    const pctMove = pos.signal.direction === "long"
+      ? (mid - pos.entryPrice) / pos.entryPrice
+      : (pos.entryPrice - mid) / pos.entryPrice;
+
+    // Time-based ROI table
+    const holdMs = pos.entryTs ? f.ts - pos.entryTs : pos.signal.horizon * 1000;
+    const holdMin = holdMs / 60_000;
+
+    let targetPct: number;
+    if (holdMin < 1) targetPct = 0.008;       // <1 min: need 0.8%
+    else if (holdMin < 5) targetPct = 0.005;  // 1-5 min: need 0.5%
+    else if (holdMin < 15) targetPct = 0.003; // 5-15 min: need 0.3%
+    else if (holdMin < 30) targetPct = 0.001; // 15-30 min: need 0.1%
+    else targetPct = 0;                        // 30+ min: close at breakeven
+
+    return pctMove >= targetPct;
   }
 
   private computePnl(direction: "long" | "short", entry: number, exit: number, qty: number): number {
