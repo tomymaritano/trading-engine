@@ -50,6 +50,8 @@ import { TickStore } from "./storage/tick-store.js";
 import { TerminalDashboard } from "./dashboard/terminal.js";
 import { startMetricsCollection, startMetricsServer } from "./utils/metrics.js";
 import { startDashboardServer } from "./api/ws-server.js";
+import { TrailingStopManager } from "./execution/trailing-stop.js";
+import { TradeJournal } from "./audit/trade-journal.js";
 import type { WsManager } from "./ingestion/ws-manager.js";
 import type { Exchange, MarketEvent } from "./types/market.js";
 
@@ -174,6 +176,14 @@ async function main(): Promise<void> {
   const portfolioManager = new PortfolioManager(initialEquity);
   portfolioManager.start();
 
+  // ── Trailing Stops ─────────────────────────────────────────────
+  const trailingStopManager = new TrailingStopManager(0.01, 0.005); // 1% trail, 0.5% activation
+  trailingStopManager.start();
+
+  // ── Trade Journal (audit trail) ───────────────────────────────
+  const tradeJournal = new TradeJournal("data/journal");
+  tradeJournal.start();
+
   // ── Metrics (Prometheus) ────────────────────────────────────────
   startMetricsCollection();
   startMetricsServer(metricsPort);
@@ -216,6 +226,7 @@ async function main(): Promise<void> {
   async function shutdown(): Promise<void> {
     log.info("Shutting down...");
     dashboard?.stop();
+    tradeJournal.stop();
     executionEngine.stop();
     featureEngine.stop();
     sentimentEngine.stop();
