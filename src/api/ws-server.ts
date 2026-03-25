@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { bus } from "../utils/event-bus.js";
 import { createChildLogger } from "../utils/logger.js";
 import { metrics } from "../utils/metrics.js";
+import { addEquityPoint } from "../storage/state-history.js";
 import type { Trade } from "../types/market.js";
 import type { FeatureVector, TradingSignal } from "../types/signals.js";
 
@@ -256,9 +257,16 @@ export function startDashboardServer(port = 3001): void {
     });
   });
 
-  // ── Broadcast state every 500ms ────────────────────────────────
+  // ── Broadcast state every 500ms + track equity ─────────────────
+  let lastEquityTrack = 0;
   setInterval(() => {
     broadcast(wss, { type: "state", data: state });
+
+    // Track equity every 5s for history
+    if (Date.now() - lastEquityTrack > 5000) {
+      addEquityPoint(state.risk.equity);
+      lastEquityTrack = Date.now();
+    }
   }, 500);
 
   server.on("error", (err: NodeJS.ErrnoException) => {

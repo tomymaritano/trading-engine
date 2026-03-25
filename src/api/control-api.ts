@@ -4,6 +4,8 @@ import { createChildLogger } from "../utils/logger.js";
 import { RISK_PROFILES } from "../decisions/risk-gate.js";
 import { SIGNAL_PROFILES } from "../decisions/signal-gate.js";
 import { getTradingParams, updateTradingParams, preflightChecks } from "../config/trading-params.js";
+import { getUserSettings, updateUserSettings } from "../storage/user-settings.js";
+import { getStateHistory } from "../storage/state-history.js";
 
 const log = createChildLogger("control-api");
 
@@ -141,6 +143,27 @@ export function startControlApi(port: number, control: EngineControl): void {
         }
 
         json(res, { ok: true, params, checks });
+        return;
+      }
+
+      // GET /api/settings — user settings (persisted to disk)
+      if (method === "GET" && url === "/api/settings") {
+        json(res, getUserSettings());
+        return;
+      }
+
+      // POST /api/settings — update + persist
+      if (method === "POST" && url === "/api/settings") {
+        const body = await readBody(req);
+        const update = JSON.parse(body);
+        const settings = updateUserSettings(update);
+        json(res, settings);
+        return;
+      }
+
+      // GET /api/history — accumulated state for dashboard restore on reload
+      if (method === "GET" && url === "/api/history") {
+        json(res, getStateHistory());
         return;
       }
 

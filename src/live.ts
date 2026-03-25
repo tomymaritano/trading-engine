@@ -56,6 +56,8 @@ import { startControlApi } from "./api/control-api.js";
 import { TrailingStopManager } from "./execution/trailing-stop.js";
 import { TradeJournal } from "./audit/trade-journal.js";
 import { TelegramAlerts } from "./alerts/telegram.js";
+import { loadUserSettings } from "./storage/user-settings.js";
+import { startStateHistory, addEquityPoint } from "./storage/state-history.js";
 import type { WsManager } from "./ingestion/ws-manager.js";
 import type { Exchange, MarketEvent } from "./types/market.js";
 
@@ -81,6 +83,13 @@ const mlUrl = getArg("ml-url", "http://localhost:8000");
 
 async function main(): Promise<void> {
   const startTs = Date.now();
+
+  // Load persisted user settings
+  const userSettings = loadUserSettings();
+  log.info({ settings: userSettings }, "User settings loaded");
+
+  // Start state history tracking
+  startStateHistory();
 
   if (!showDashboard) {
     console.log(`
