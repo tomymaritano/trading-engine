@@ -3,6 +3,7 @@ import { bus } from "../utils/event-bus.js";
 import { createChildLogger } from "../utils/logger.js";
 import { RISK_PROFILES } from "../decisions/risk-gate.js";
 import { SIGNAL_PROFILES } from "../decisions/signal-gate.js";
+import { getTradingParams, updateTradingParams, preflightChecks } from "../config/trading-params.js";
 
 const log = createChildLogger("control-api");
 
@@ -114,6 +115,32 @@ export function startControlApi(port: number, control: EngineControl): void {
       // GET /api/symbols
       if (method === "GET" && url === "/api/symbols") {
         json(res, control.getActiveSymbols());
+        return;
+      }
+
+      // GET /api/trading-params
+      if (method === "GET" && url === "/api/trading-params") {
+        const params = getTradingParams();
+        const checks = preflightChecks(params);
+        json(res, { params, preflightChecks: checks, canGoLive: checks.length === 0 });
+        return;
+      }
+
+      // POST /api/trading-params
+      if (method === "POST" && url === "/api/trading-params") {
+        const body = await readBody(req);
+        const update = JSON.parse(body);
+        const params = updateTradingParams(update);
+        const checks = preflightChecks(params);
+
+        // Block live mode if preflight fails
+        if (params.mode === "live" && checks.length > 0) {
+          updateTradingParams({ mode: "paper" });
+          json(res, { ok: false, error: "Cannot go live", checks });
+          return;
+        }
+
+        json(res, { ok: true, params, checks });
         return;
       }
 
