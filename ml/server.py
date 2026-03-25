@@ -18,6 +18,7 @@ For production, export models to ONNX format for cross-platform
 inference. Training happens in Jupyter notebooks, serving happens here.
 """
 
+import os
 from fastapi import FastAPI
 from pydantic import BaseModel
 import numpy as np
@@ -72,6 +73,63 @@ class BatchPredictionResponse(BaseModel):
 
 
 # ── Model ──────────────────────────────────────────────────────────
+
+class TrainedModel:
+    """
+    LightGBM model trained on real order book data.
+    Falls back to BaselineModel if no trained model exists.
+    """
+
+    def __init__(self):
+        self.model = None
+        self.name = "lightgbm_signal_filter_v1"
+        model_path = "models/signal_filter.txt"
+
+        try:
+            import lightgbm as lgb
+            if os.path.exists(model_path):
+                self.model = lgb.Booster(model_file=model_path)
+                logger.info(f"Loaded trained model from {model_path}")
+            else:
+                logger.info(f"No trained model at {model_path}, using baseline")
+        except ImportError:
+            logger.info("LightGBM not installed, using baseline")
+
+    def predict(self, features: np.ndarray) -> PredictionResponse:
+        if self.model is None:
+            return BaselineModel().predict(features)
+
+        # Extract the 10 features the model expects
+        # Map from the 29-feature engine vector to our 10-feature training vector
+        if len(features) >= NUM_FEATURES:
+            model_features = np.array([
+                features[4],   # bookImbalanceTop5 → imbalance_5
+                features[5],   # bookImbalanceTop20 → imbalance_20
+                features[9],   # tradeImbalance → trade_imbalance
+                features[7] / max(features[6], 1) if features[6] > 0 else 1,  # depth_ratio
+                features[0] / max(features[1], 1) if features[1] > 0 else 0,  # spread_pct
+                features[14],  # aggTradeIntensity → trade_intensity
+                features[6] / max(features[1], 1) if features[1] > 0 else 0,  # bid_depth_norm
+                features[7] / max(features[1], 1) if features[1] > 0 else 0,  # ask_depth_norm
+                features[13],  # buyPressure
+                features[4] * features[9],  # imb_x_flow (interaction)
+            ]).reshape(1, -1)
+        else:
+            model_features = features.reshape(1, -1)
+
+        prob = self.model.predict(model_features)[0]
+
+        return PredictionResponse(
+            predicted_return=float(prob * 0.0003),  # scale probability to expected return
+            prob_up=float(prob),
+            prob_down=float(1 - prob),
+            confidence=float(abs(prob - 0.5) * 2),  # 0.5 → 0 conf, 1.0 → 1.0 conf
+            model=self.name,
+        )
+
+    def predict_batch(self, features_batch: np.ndarray) -> list[PredictionResponse]:
+        return [self.predict(f) for f in features_batch]
+
 
 class BaselineModel:
     """
@@ -135,7 +193,8 @@ class BaselineModel:
 
 
 # ── Model instance ─────────────────────────────────────────────────
-model = BaselineModel()
+# Try trained model first, fall back to baseline
+model = TrainedModel()
 
 
 # ── Endpoints ──────────────────────────────────────────────────────
