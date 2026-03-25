@@ -3,6 +3,7 @@ import PQueue from "p-queue";
 import { bus } from "../utils/event-bus.js";
 import { createChildLogger } from "../utils/logger.js";
 import { orderBookManager } from "../stream/order-book-manager.js";
+import { getTradingParams } from "../config/trading-params.js";
 import type { OrderIntent, OrderType } from "../types/signals.js";
 import type { Exchange } from "../types/market.js";
 import type { AppConfig } from "../config/index.js";
@@ -106,7 +107,9 @@ export class ExecutionEngine {
     }
 
     await queue.add(async () => {
-      if (this.paperMode) {
+      // Check live mode from trading params (can change at runtime from dashboard)
+      const isLive = getTradingParams().mode === "live";
+      if (this.paperMode && !isLive) {
         this.executePaperOrder(id, orderState);
       } else {
         await this.executeLiveOrder(id, orderState);
@@ -212,10 +215,85 @@ export class ExecutionEngine {
    * Implement per-exchange API calls here.
    */
   private async executeLiveOrder(id: string, order: OrderState): Promise<void> {
-    // TODO: implement real exchange API calls
-    // This should use the exchange REST API with signed requests
-    log.warn({ id }, "Live execution not implemented, falling back to paper");
-    this.executePaperOrder(id, order);
+    const { intent } = order;
+
+    // Check if Binance Futures API is configured
+    const apiKey = process.env.BINANCE_API_KEY;
+    const apiSecret = process.env.BINANCE_API_SECRET;
+    const testnet = process.env.BINANCE_TESTNET !== "false"; // default to testnet
+
+    if (!apiKey || !apiSecret) {
+      log.warn({ id }, "No Binance API keys, falling back to paper");
+      this.executePaperOrder(id, order);
+      return;
+    }
+
+    try {
+      const { BinanceFuturesRestClient } = await import("../adapters/rest/binance-futures-rest.js");
+      const client = new BinanceFuturesRestClient(apiKey, apiSecret, testnet);
+
+      const binanceSymbol = intent.symbol.replace("-", "");
+      const side = intent.side === "buy" ? "BUY" as const : "SELL" as const;
+
+      // Round quantity to exchange precision
+      const qty = intent.qty.toFixed(intent.symbol.includes("BTC") ? 3 : intent.symbol.includes("ETH") ? 3 : 0);
+
+      log.info({
+        id,
+        symbol: binanceSymbol,
+        side,
+        qty,
+        type: intent.orderType === "market" ? "MARKET" : "LIMIT",
+        testnet,
+      }, "Executing LIVE order on Binance Futures");
+
+      const result = await client.placeOrder({
+        symbol: binanceSymbol,
+        side,
+        type: intent.orderType === "market" ? "MARKET" : "LIMIT",
+        quantity: qty,
+        price: intent.orderType !== "market" && intent.limitPrice
+          ? intent.limitPrice.toString()
+          : undefined,
+        timeInForce: intent.orderType !== "market" ? "IOC" : undefined,
+      });
+
+      if (result) {
+        const fillData = result as Record<string, unknown>;
+        const avgPrice = Number(fillData.avgPrice ?? fillData.price ?? 0);
+        const executedQty = Number(fillData.executedQty ?? qty);
+
+        order.status = "filled";
+        order.filledQty = new Decimal(executedQty);
+        order.avgFillPrice = new Decimal(avgPrice);
+
+        bus.emit("order:filled", {
+          id,
+          fillPrice: avgPrice,
+          fillQty: executedQty,
+          slippageBps: 0,
+          symbol: intent.symbol,
+          exchange: intent.exchange,
+          side: intent.side,
+          direction: intent.signal.direction,
+        });
+
+        log.info({
+          id,
+          symbol: binanceSymbol,
+          side,
+          qty: executedQty,
+          price: avgPrice,
+          testnet,
+          orderId: fillData.orderId,
+        }, "LIVE order filled");
+      } else {
+        this.rejectOrder(id, "Exchange returned null response");
+      }
+    } catch (err) {
+      log.error({ id, err }, "LIVE order execution failed");
+      this.rejectOrder(id, `Exchange error: ${(err as Error).message}`);
+    }
   }
 
   /**
