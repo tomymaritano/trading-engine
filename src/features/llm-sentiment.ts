@@ -172,36 +172,51 @@ Respond in this exact JSON format only, no other text:
    * Falls back to a simple Google News RSS if CryptoPanic is unavailable.
    */
   private async fetchHeadlines(): Promise<string[]> {
+    // Source 1: Reddit r/cryptocurrency (free, no auth, always works)
     try {
-      // CryptoPanic free API (no auth needed for public posts)
       const res = await fetch(
-        "https://cryptopanic.com/api/free/v1/posts/?auth_token=&public=true&kind=news",
-        { signal: AbortSignal.timeout(5000) },
+        "https://www.reddit.com/r/cryptocurrency/hot.json?limit=15",
+        {
+          signal: AbortSignal.timeout(5000),
+          headers: { "User-Agent": "CriterionX/1.0" },
+        },
       );
 
       if (res.ok) {
-        const data = await res.json() as { results: Array<{ title: string }> };
-        return (data.results ?? []).map((r) => r.title).slice(0, 20);
+        const data = await res.json() as {
+          data: { children: Array<{ data: { title: string } }> };
+        };
+        const titles = (data.data?.children ?? []).map((c) => c.data.title);
+        if (titles.length > 0) {
+          log.debug({ count: titles.length }, "Fetched headlines from Reddit");
+          return titles;
+        }
       }
     } catch {
-      // CryptoPanic failed, try fallback
+      // Reddit failed
     }
 
-    // Fallback: CoinGecko status updates (always available)
+    // Source 2: Reddit r/bitcoin
     try {
       const res = await fetch(
-        "https://api.coingecko.com/api/v3/status_updates?per_page=20",
-        { signal: AbortSignal.timeout(5000) },
+        "https://www.reddit.com/r/bitcoin/hot.json?limit=10",
+        {
+          signal: AbortSignal.timeout(5000),
+          headers: { "User-Agent": "CriterionX/1.0" },
+        },
       );
 
       if (res.ok) {
-        const data = await res.json() as { status_updates: Array<{ body: string }> };
-        return (data.status_updates ?? []).map((u) => u.body.slice(0, 200)).slice(0, 20);
+        const data = await res.json() as {
+          data: { children: Array<{ data: { title: string } }> };
+        };
+        return (data.data?.children ?? []).map((c) => c.data.title);
       }
     } catch {
-      // Both sources failed
+      // Both failed
     }
 
+    log.warn("No headlines available from any source");
     return [];
   }
 
