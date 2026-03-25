@@ -23,6 +23,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "@criterionx/core": "^0.3.5",
     "decimal.js": "^10.4.3",
     "eventemitter3": "^5.0.1",

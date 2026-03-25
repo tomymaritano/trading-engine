@@ -42,6 +42,7 @@ import { FeatureEngine } from "./features/feature-engine.js";
 import { SentimentEngine } from "./features/sentiment.js";
 import { CrossExchangeEngine } from "./features/cross-exchange.js";
 import { WhaleDetector } from "./features/whale-detector.js";
+import { LLMSentimentAgent } from "./features/llm-sentiment.js";
 import { StrategyOrchestrator } from "./models/strategy-orchestrator.js";
 import { MLBridge } from "./models/ml-bridge.js";
 import { RiskEngine } from "./risk/risk-engine.js";
@@ -151,6 +152,10 @@ async function main(): Promise<void> {
   // ── Sentiment Engine ────────────────────────────────────────────
   const sentimentEngine = new SentimentEngine(symbolList);
   sentimentEngine.start();
+
+  // ── LLM Sentiment Agent (Claude-powered news analysis) ────────
+  const llmSentiment = new LLMSentimentAgent(symbolList);
+  llmSentiment.start();
 
   // ── Cross-Exchange Analysis ──────────────────────────────────────
   const crossExchange = new CrossExchangeEngine(symbolList, exchangeList);

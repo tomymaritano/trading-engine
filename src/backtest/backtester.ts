@@ -342,7 +342,8 @@ export class Backtester {
     const stepSize = Math.floor(features.length / steps);
 
     for (let i = 0; i < steps; i++) {
-      const start = i * Math.floor(stepSize * 0.3);
+      // Non-overlapping windows (fixed: was 30% overlap, causing data leakage)
+      const start = i * stepSize;
       const trainEnd = start + Math.floor(stepSize * trainPct);
       const testEnd = Math.min(start + stepSize, features.length);
 
@@ -358,5 +359,73 @@ export class Backtester {
     }
 
     return results;
+  }
+
+  /**
+   * Lookahead Bias Detection (pattern: Freqtrade)
+   *
+   * Tests whether the strategy's performance depends on temporal order.
+   * If shuffling the data doesn't destroy performance, you have data leakage.
+   *
+   * Method: Permutation test
+   * 1. Run backtest on original (time-ordered) data → get Sharpe
+   * 2. Shuffle the features randomly and re-run → get shuffled Sharpe
+   * 3. Repeat N times
+   * 4. If original Sharpe is not significantly better than shuffled → bias exists
+   *
+   * A real edge depends on temporal patterns (what happens AFTER a signal).
+   * If the strategy works equally well on shuffled data, it's not using
+   * temporal information — it's using something that shouldn't be available.
+   */
+  detectLookaheadBias(
+    strategy: Strategy,
+    features: FeatureVector[],
+    initialEquity: number,
+    nPermutations = 10,
+  ): { hasBias: boolean; evidence: string[]; originalSharpe: number; shuffledSharpes: number[] } {
+    const evidence: string[] = [];
+
+    // 1. Original backtest
+    strategy.reset();
+    const original = this.run(strategy, features, initialEquity);
+    const originalSharpe = original.sharpeRatio;
+
+    evidence.push(`Original Sharpe: ${originalSharpe.toFixed(4)} (${original.totalTrades} trades)`);
+
+    // 2. Permutation tests
+    const shuffledSharpes: number[] = [];
+
+    for (let p = 0; p < nPermutations; p++) {
+      // Shuffle features (destroy temporal order)
+      const shuffled = [...features];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+
+      strategy.reset();
+      const result = this.run(strategy, shuffled, initialEquity);
+      shuffledSharpes.push(result.sharpeRatio);
+    }
+
+    // 3. Statistical test: is original significantly better than shuffled?
+    const avgShuffled = shuffledSharpes.reduce((a, b) => a + b, 0) / shuffledSharpes.length;
+    const betterThanShuffled = shuffledSharpes.filter((s) => originalSharpe > s).length;
+    const percentile = betterThanShuffled / nPermutations;
+
+    evidence.push(`Avg shuffled Sharpe: ${avgShuffled.toFixed(4)}`);
+    evidence.push(`Original beats ${(percentile * 100).toFixed(0)}% of shuffled runs`);
+
+    // If original is not in top 90% of shuffled, likely has bias
+    const hasBias = percentile < 0.9;
+
+    if (hasBias) {
+      evidence.push("⚠️ LOOKAHEAD BIAS DETECTED: strategy performs similarly on shuffled data");
+      evidence.push("This means the strategy may be using information it shouldn't have access to");
+    } else {
+      evidence.push("✅ No lookahead bias: strategy depends on temporal order (good)");
+    }
+
+    return { hasBias, evidence, originalSharpe, shuffledSharpes };
   }
 }

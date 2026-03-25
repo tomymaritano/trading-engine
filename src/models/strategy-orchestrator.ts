@@ -6,6 +6,7 @@ import { LiquidationCascadeStrategy } from "./strategies/liquidation-cascade.js"
 import { VolatilityRegimeStrategy } from "./strategies/volatility-regime.js";
 import { CrossExchangeSpreadStrategy } from "./strategies/cross-exchange-spread.js";
 import { CompositeAlphaStrategy } from "./strategies/composite-alpha.js";
+import { DebateAgent } from "./debate-agent.js";
 import type { FeatureVector, TradingSignal } from "../types/signals.js";
 import type { AppConfig, StrategyConfig } from "../config/index.js";
 
@@ -30,6 +31,7 @@ export class StrategyOrchestrator {
   private strategies: Strategy[] = [];
   private disabledStrategies = new Set<string>();
   private signalCount = 0;
+  private debateAgent = new DebateAgent();
 
   constructor(private config: AppConfig) {
     this.registerDefaultStrategies();
@@ -99,8 +101,24 @@ export class StrategyOrchestrator {
       if (!merged.features.midPrice && features.midPrice > 0) {
         merged.features.midPrice = features.midPrice;
       }
-      this.signalCount++;
-      bus.emit("signal:new", merged);
+
+      // Bull/Bear Debate (async, non-blocking)
+      if (this.debateAgent.isEnabled) {
+        this.debateAgent.debate(merged, features).then((debated) => {
+          if (debated) {
+            this.signalCount++;
+            bus.emit("signal:new", debated);
+          }
+        }).catch(() => {
+          // On debate error, emit original signal
+          this.signalCount++;
+          bus.emit("signal:new", merged);
+        });
+      } else {
+        this.signalCount++;
+        bus.emit("signal:new", merged);
+      }
+
       log.debug(
         {
           symbol: merged.symbol,
