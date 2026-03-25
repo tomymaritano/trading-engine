@@ -16,16 +16,16 @@ Exchange WS → Adapters → EventBus → OrderBook → Features → Strategies 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                     TRADING INTELLIGENCE ENGINE                       │
-│                                                                       │
-│  INGESTION            PROCESSING            INTELLIGENCE              │
+│                     TRADING INTELLIGENCE ENGINE                      │
+│                                                                      │
+│  INGESTION            PROCESSING            INTELLIGENCE             │
 │  ┌──────────────┐    ┌───────────────┐     ┌──────────────────────┐  │
 │  │ Binance WS   │───▶│ OrderBook Mgr │────▶│ Feature Engine       │  │
 │  │ Kraken WS    │    │ (L2 depth)    │     │ (30+ features/tick)  │  │
 │  │ OKX WS       │    └───────────────┘     ├──────────────────────┤  │
 │  └──────────────┘                          │ Whale Detector       │  │
-│                                             │ Sentiment Engine     │  │
-│  REST CLIENTS                               │ Cross-Exchange       │  │
+│                                            │ Sentiment Engine     │  │
+│  REST CLIENTS                              │ Cross-Exchange       │  │
 │  ┌──────────────┐                          └──────────┬───────────┘  │
 │  │ Binance REST │    STRATEGIES                       │              │
 │  │ Kraken REST  │    ┌───────────────┐     ┌──────────▼───────────┐  │
@@ -35,8 +35,8 @@ Exchange WS → Adapters → EventBus → OrderBook → Features → Strategies 
 │                      │ Vol Regime    │                │              │
 │                      │ Cross-Exch    │     ┌──────────▼───────────┐  │
 │                      └───────────────┘     │ Risk Engine          │  │
-│                                             │ Kelly sizing         │  │
-│  EXECUTION                                  │ Circuit breakers     │  │
+│                                            │ Kelly sizing         │  │
+│  EXECUTION                                 │ Circuit breakers     │  │
 │  ┌──────────────┐                          │ Kill switch          │  │
 │  │ Smart Router │◀─────────────────────────┤                      │  │
 │  │ Paper + Live │                          └──────────────────────┘  │
@@ -46,13 +46,13 @@ Exchange WS → Adapters → EventBus → OrderBook → Features → Strategies 
 │  STORAGE             │ Prometheus Metrics │ Pino Logs │ WS API  │    │
 │  ┌──────────────┐    └──────────────────────────────────────────┘    │
 │  │ TickStore    │                                                    │
-│  │ (NDJSON.gz)  │    DASHBOARD (Next.js)                            │
+│  │ (NDJSON.gz)  │    DASHBOARD (Next.js)                             │
 │  └──────────────┘    ┌──────────────────────────────────────────┐    │
 │                      │ Equity Chart │ Signal Feed │ Risk Panel  │    │
 │  ML SERVICE (Python) │ Tickers │ Microstructure │ Whale Alerts  │    │
 │  ┌──────────────┐    └──────────────────────────────────────────┘    │
 │  │ FastAPI      │                                                    │
-│  │ ONNX/LightGBM│                                                   │
+│  │ ONNX/LightGBM│                                                    │
 │  └──────────────┘                                                    │
 └──────────────────────────────────────────────────────────────────────┘
 ```
