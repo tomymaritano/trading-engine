@@ -1,3 +1,4 @@
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { bus } from "../utils/event-bus.js";
 import { createChildLogger } from "../utils/logger.js";
 
@@ -41,6 +42,8 @@ const MAX_PRICE_POINTS = 2000;
 const MAX_TRADE_HISTORY = 500;
 const MAX_SIGNAL_HISTORY = 200;
 
+const STATE_FILE = "data/state-history.json";
+
 let state: HistoricalState = {
   equityHistory: [],
   priceHistory: {},
@@ -51,8 +54,43 @@ let state: HistoricalState = {
   totalSignals: 0,
 };
 
+/** Load state from disk on startup */
+function loadState(): void {
+  try {
+    if (existsSync(STATE_FILE)) {
+      const raw = readFileSync(STATE_FILE, "utf-8");
+      const saved = JSON.parse(raw) as HistoricalState;
+      state.equityHistory = saved.equityHistory ?? [];
+      state.priceHistory = saved.priceHistory ?? {};
+      state.tradeHistory = saved.tradeHistory ?? [];
+      state.signalHistory = saved.signalHistory ?? [];
+      state.totalTrades = saved.totalTrades ?? 0;
+      state.totalSignals = saved.totalSignals ?? 0;
+      log.info({
+        equityPoints: state.equityHistory.length,
+        symbols: Object.keys(state.priceHistory).length,
+        trades: state.tradeHistory.length,
+      }, "State history restored from disk");
+    }
+  } catch (err) {
+    log.warn({ err }, "Failed to load state history");
+  }
+}
+
+/** Save state to disk */
+function saveState(): void {
+  try {
+    mkdirSync("data", { recursive: true });
+    writeFileSync(STATE_FILE, JSON.stringify(state));
+  } catch {}
+}
+
 export function startStateHistory(): void {
+  loadState();
   state.sessionStart = Date.now();
+
+  // Save to disk every 30 seconds
+  setInterval(saveState, 30_000);
 
   // Track prices from trades (every 5s per symbol)
   const lastPriceTs: Record<string, number> = {};
