@@ -55,7 +55,7 @@ export function startDashboardServer(port = 3001): void {
   const wss = new WebSocketServer({ server });
 
   // ── State accumulator ──────────────────────────────────────────
-  const state: DashboardState = {
+  const state: DashboardState & { ai: Record<string, unknown> } = {
     tickers: {},
     features: {},
     signals: [],
@@ -65,6 +65,12 @@ export function startDashboardServer(port = 3001): void {
     whaleEvents: [],
     throughput: { trades: 0, features: 0, signals: 0 },
     uptime: Date.now(),
+    ai: {
+      sentimentEnabled: false,
+      debateEnabled: false,
+      lastSentiment: {} as Record<string, { score: number; source: string; ts: number }>,
+      debateStats: { total: 0, bullWins: 0, bearWins: 0 },
+    },
   };
 
   // Track recent trades for ticker
@@ -141,6 +147,33 @@ export function startDashboardServer(port = 3001): void {
 
     // Push signal immediately to clients
     broadcast(wss, { type: "signal", data: signal });
+  });
+
+  // Track LLM sentiment events
+  bus.on("feature:anomaly", (anomaly) => {
+    if (anomaly.type === "llm_sentiment") {
+      const aiState = state.ai as any;
+      aiState.sentimentEnabled = true;
+      if (!aiState.lastSentiment) aiState.lastSentiment = {};
+      aiState.lastSentiment[anomaly.symbol] = {
+        score: anomaly.severity * (anomaly.details?.includes("bullish") ? 1 : -1),
+        source: "claude",
+        ts: Date.now(),
+      };
+    }
+  });
+
+  // Track debate results from signals
+  bus.on("signal:new", (signal) => {
+    if (signal.metadata?.debate) {
+      const aiState = state.ai as any;
+      aiState.debateEnabled = true;
+      const debate = signal.metadata.debate as any;
+      if (!aiState.debateStats) aiState.debateStats = { total: 0, bullWins: 0, bearWins: 0 };
+      aiState.debateStats.total++;
+      if (debate.winner === "bull") aiState.debateStats.bullWins++;
+      if (debate.winner === "bear") aiState.debateStats.bearWins++;
+    }
   });
 
   bus.on("feature:anomaly", (anomaly) => {
