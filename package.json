@@ -17,6 +17,8 @@
     "optimize": "tsx scripts/optimize.ts",
     "download": "tsx scripts/download-bulk.ts",
     "capture": "tsx scripts/capture-book.ts",
+    "train": "python3 ml/train_model.py",
+    "retrain": "./scripts/retrain.sh",
     "download:api": "tsx scripts/download-data.ts",
     "lint": "tsc --noEmit"
   },
