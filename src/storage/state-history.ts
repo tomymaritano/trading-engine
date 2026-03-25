@@ -15,6 +15,7 @@ const log = createChildLogger("state-history");
 
 interface HistoricalState {
   equityHistory: { ts: number; equity: number }[];
+  priceHistory: Record<string, { ts: number; price: number }[]>;
   tradeHistory: Array<{
     ts: number;
     symbol: string;
@@ -36,11 +37,13 @@ interface HistoricalState {
 }
 
 const MAX_EQUITY_POINTS = 2000;
+const MAX_PRICE_POINTS = 2000;
 const MAX_TRADE_HISTORY = 500;
 const MAX_SIGNAL_HISTORY = 200;
 
 let state: HistoricalState = {
   equityHistory: [],
+  priceHistory: {},
   tradeHistory: [],
   signalHistory: [],
   sessionStart: Date.now(),
@@ -51,10 +54,20 @@ let state: HistoricalState = {
 export function startStateHistory(): void {
   state.sessionStart = Date.now();
 
-  // Track equity every 2 seconds
-  setInterval(() => {
-    // The WS server maintains equity — we read from the bus events
-  }, 2000);
+  // Track prices from trades (every 5s per symbol)
+  const lastPriceTs: Record<string, number> = {};
+  bus.on("market:trade", (trade) => {
+    const sym = trade.symbol;
+    const now = Date.now();
+    if (lastPriceTs[sym] && now - lastPriceTs[sym] < 5000) return; // throttle 5s
+    lastPriceTs[sym] = now;
+
+    if (!state.priceHistory[sym]) state.priceHistory[sym] = [];
+    state.priceHistory[sym].push({ ts: now, price: trade.price.toNumber() });
+    if (state.priceHistory[sym].length > MAX_PRICE_POINTS) {
+      state.priceHistory[sym].shift();
+    }
+  });
 
   // Track fills
   bus.on("order:filled", (fill) => {
