@@ -212,15 +212,21 @@ export class ExecutionEngine {
 
   /**
    * Live execution: send real orders to exchanges.
-   * Implement per-exchange API calls here.
+   * Routes through wallet bridge if USE_WALLET=true, otherwise uses Binance direct.
    */
   private async executeLiveOrder(id: string, order: OrderState): Promise<void> {
     const { intent } = order;
 
-    // Check if Binance Futures API is configured
+    // ── Route via Wallet if configured ─────────────────────
+    if (process.env.USE_WALLET === "true") {
+      await this.executeViaWallet(id, order);
+      return;
+    }
+
+    // ── Direct Binance execution (legacy) ──────────────────
     const apiKey = process.env.BINANCE_API_KEY;
     const apiSecret = process.env.BINANCE_API_SECRET;
-    const testnet = process.env.BINANCE_TESTNET !== "false"; // default to testnet
+    const testnet = process.env.BINANCE_TESTNET !== "false";
 
     if (!apiKey || !apiSecret) {
       log.warn({ id }, "No Binance API keys, falling back to paper");
@@ -293,6 +299,89 @@ export class ExecutionEngine {
     } catch (err) {
       log.error({ id, err }, "LIVE order execution failed");
       this.rejectOrder(id, `Exchange error: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Execute via CriterionX Wallet.
+   * The wallet handles key management, signing, and chain submission.
+   */
+  private async executeViaWallet(id: string, order: OrderState): Promise<void> {
+    const { intent } = order;
+
+    try {
+      const { getWalletBridge } = await import("../adapters/rest/wallet-bridge.js");
+      const wallet = getWalletBridge();
+
+      if (!wallet.isHealthy) {
+        log.warn({ id }, "Wallet unhealthy, falling back to paper");
+        this.executePaperOrder(id, order);
+        return;
+      }
+
+      // Map exchange to chain
+      const chain = this.exchangeToChain(intent.exchange);
+
+      log.info({
+        id,
+        chain,
+        symbol: intent.symbol,
+        side: intent.signal.direction,
+        qty: intent.qty.toString(),
+      }, "Executing via wallet bridge");
+
+      order.status = "submitted";
+      bus.emit("order:submitted", { id, intent });
+
+      const result = await wallet.signTrade({
+        chain,
+        symbol: intent.symbol,
+        side: intent.signal.direction as "long" | "short",
+        size: intent.qty.toNumber(),
+        price: intent.limitPrice?.toNumber(),
+      });
+
+      if (result.status === "submitted") {
+        const fillPrice = intent.limitPrice?.toNumber() ?? orderBookManager.getBook(intent.exchange, intent.symbol)?.cachedMidPrice ?? 0;
+
+        order.status = "filled";
+        order.filledQty = intent.qty;
+        order.avgFillPrice = new Decimal(fillPrice);
+
+        bus.emit("order:filled", {
+          id,
+          fillPrice,
+          fillQty: intent.qty.toNumber(),
+          slippageBps: 0,
+          symbol: intent.symbol,
+          exchange: intent.exchange,
+          side: intent.side,
+          direction: intent.signal.direction,
+        });
+
+        log.info({
+          id,
+          chain,
+          txHash: result.txHash,
+          walletOrderId: result.orderId,
+          signedBy: result.signedBy,
+        }, "Wallet order filled");
+      } else {
+        this.rejectOrder(id, `Wallet signing failed: ${result.error}`);
+      }
+    } catch (err) {
+      log.error({ id, err }, "Wallet execution failed");
+      this.rejectOrder(id, `Wallet error: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Map exchange name to wallet chain identifier.
+   */
+  private exchangeToChain(exchange: Exchange): string {
+    switch (exchange) {
+      case "binance": return "arbitrum"; // default EVM chain for CEX-like trading
+      default: return "dydx"; // dYdX is the primary target
     }
   }
 
