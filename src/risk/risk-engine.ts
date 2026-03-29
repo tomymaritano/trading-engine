@@ -104,6 +104,17 @@ export class RiskEngine {
 
     const action = riskResult.data?.action;
 
+    // Broadcast decision to dashboard
+    bus.emit("risk:decision", {
+      symbol: signal.symbol,
+      action: action ?? "unknown",
+      reason: riskResult.data?.reason ?? "",
+      explanation: riskResult.meta.explanation ?? "",
+      matchedRule: riskResult.meta.matchedRule ?? "",
+      confidence: signal.confidence,
+      direction: signal.direction,
+    });
+
     if (action === "kill_switch") {
       this.activateKillSwitch(riskResult.data!.reason);
       return;

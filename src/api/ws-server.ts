@@ -4,10 +4,33 @@ import { bus } from "../utils/event-bus.js";
 import { createChildLogger } from "../utils/logger.js";
 import { metrics } from "../utils/metrics.js";
 import { addEquityPoint } from "../storage/state-history.js";
+import { orderBookManager } from "../stream/order-book-manager.js";
 import type { Trade } from "../types/market.js";
 import type { FeatureVector, TradingSignal } from "../types/signals.js";
 
 const log = createChildLogger("ws-server");
+
+interface RiskDecision {
+  ts: number;
+  symbol: string;
+  action: string;
+  reason: string;
+  explanation: string;
+  matchedRule: string;
+  confidence: number;
+  direction: string;
+}
+
+interface TrailingStopState {
+  symbol: string;
+  side: string;
+  activated: boolean;
+  stopPrice: number;
+  entryPrice: number;
+  highWaterMark: number;
+  lowWaterMark: number;
+  trailingPct: number;
+}
 
 interface DashboardState {
   tickers: Record<string, { price: number; change: number; volume: number; trades: number }>;
@@ -18,6 +41,8 @@ interface DashboardState {
   connections: Record<string, boolean>;
   whaleEvents: Array<{ ts: number; symbol: string; type: string; side: string; notional: number }>;
   throughput: { trades: number; features: number; signals: number };
+  riskDecisions: RiskDecision[];
+  trailingStops: TrailingStopState[];
   uptime: number;
 }
 
@@ -35,7 +60,7 @@ interface DashboardState {
  *   Server → Client: { type: "whale", data: WhaleEvent }
  *   Client → Server: { type: "kill_switch" }  (emergency stop)
  */
-export function startDashboardServer(port = 3001): void {
+export function startDashboardServer(port = 3003): void {
   const server = createServer((req, res) => {
     // CORS headers for Next.js dev server
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -65,6 +90,8 @@ export function startDashboardServer(port = 3001): void {
     connections: {},
     whaleEvents: [],
     throughput: { trades: 0, features: 0, signals: 0 },
+    riskDecisions: [],
+    trailingStops: [],
     uptime: Date.now(),
     ai: {
       sentimentEnabled: false,
@@ -198,6 +225,27 @@ export function startDashboardServer(port = 3001): void {
   bus.on("risk:circuit_breaker", () => { state.risk.circuitBreaker = true; });
   bus.on("risk:kill_switch", () => { state.risk.killSwitch = true; });
 
+  // Track risk gate decisions for dashboard
+  bus.on("risk:decision", (decision) => {
+    const entry: RiskDecision = {
+      ts: Date.now(),
+      symbol: decision.symbol ?? "",
+      action: decision.action ?? "unknown",
+      reason: decision.reason ?? "",
+      explanation: decision.explanation ?? "",
+      matchedRule: decision.matchedRule ?? "",
+      confidence: decision.confidence ?? 0,
+      direction: decision.direction ?? "",
+    };
+    state.riskDecisions.unshift(entry);
+    if (state.riskDecisions.length > 50) state.riskDecisions.pop();
+  });
+
+  // Track trailing stop state
+  bus.on("trailing:update", (stops: TrailingStopState[]) => {
+    state.trailingStops = stops;
+  });
+
   bus.on("order:filled", (fill) => {
     // Track positions and PnL for dashboard
     const posKey = `${fill.exchange}:${fill.symbol}`;
@@ -257,9 +305,29 @@ export function startDashboardServer(port = 3001): void {
     });
   });
 
+  // ── Build order book snapshots for dashboard ──────────────────
+  function getBookSnapshots(): Record<string, { bids: { price: number; qty: number }[]; asks: { price: number; qty: number }[] }> {
+    const books: Record<string, { bids: { price: number; qty: number }[]; asks: { price: number; qty: number }[] }> = {};
+    for (const sym of Object.keys(state.tickers)) {
+      // Try all known exchanges
+      for (const ex of Object.keys(state.connections)) {
+        const book = orderBookManager.getBook(ex as any, sym as any);
+        if (book && book.bids.length > 0) {
+          books[sym] = {
+            bids: book.bids.slice(0, 15).map((l) => ({ price: l.price.toNumber(), qty: l.qty.toNumber() })),
+            asks: book.asks.slice(0, 15).map((l) => ({ price: l.price.toNumber(), qty: l.qty.toNumber() })),
+          };
+          break; // first exchange with data wins
+        }
+      }
+    }
+    return books;
+  }
+
   // ── Broadcast state every 500ms + track equity ─────────────────
   let lastEquityTrack = 0;
   setInterval(() => {
+    (state as any).books = getBookSnapshots();
     broadcast(wss, { type: "state", data: state });
 
     // Track equity every 5s for history

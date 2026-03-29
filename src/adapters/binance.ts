@@ -37,6 +37,9 @@ export class BinanceAdapter extends ExchangeAdapter {
     return upper;
   }
 
+  /** Max streams per combined WS connection (Binance limit: 1024, practical: 200) */
+  static readonly MAX_STREAMS_PER_CONNECTION = 200;
+
   buildWsUrl(symbols: Symbol[]): string {
     const streams = symbols.flatMap((s) => {
       const sym = this.normalizeSymbol(s);
@@ -46,6 +49,19 @@ export class BinanceAdapter extends ExchangeAdapter {
       ];
     });
     return `wss://stream.binance.com:9443/stream?streams=${streams.join("/")}`;
+  }
+
+  /** Split symbols into chunks that fit within the stream limit per connection */
+  private chunkSymbols(symbols: Symbol[]): Symbol[][] {
+    const streamsPerSymbol = 2; // trade + depth
+    const maxSymbolsPerChunk = Math.floor(
+      BinanceAdapter.MAX_STREAMS_PER_CONNECTION / streamsPerSymbol,
+    );
+    const chunks: Symbol[][] = [];
+    for (let i = 0; i < symbols.length; i += maxSymbolsPerChunk) {
+      chunks.push(symbols.slice(i, i + maxSymbolsPerChunk));
+    }
+    return chunks;
   }
 
   buildSubscriptions(_symbols: Symbol[]): unknown[] {
@@ -133,10 +149,20 @@ export class BinanceAdapter extends ExchangeAdapter {
     symbols: Symbol[],
     onEvent: (event: MarketEvent) => void,
   ): WsManager {
-    return new WsManager({
+    // For single-connection case (backwards compatible)
+    return this.createWsManagers(symbols, onEvent)[0];
+  }
+
+  /** Create multiple WS managers if symbols exceed stream limit per connection */
+  createWsManagers(
+    symbols: Symbol[],
+    onEvent: (event: MarketEvent) => void,
+  ): WsManager[] {
+    const chunks = this.chunkSymbols(symbols);
+    return chunks.map((chunk, i) => new WsManager({
       exchange: "binance",
-      url: this.buildWsUrl(symbols),
-      subscriptions: () => this.buildSubscriptions(symbols),
+      url: this.buildWsUrl(chunk),
+      subscriptions: () => this.buildSubscriptions(chunk),
       onMessage: (data) => {
         const events = this.parseMessage(data);
         for (const event of events) {
@@ -145,6 +171,6 @@ export class BinanceAdapter extends ExchangeAdapter {
           bus.emit("market:event", event);
         }
       },
-    });
+    }));
   }
 }

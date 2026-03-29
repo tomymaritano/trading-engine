@@ -59,6 +59,21 @@ export class TrailingStopManager {
       }
     });
 
+    // Broadcast trailing stop state to dashboard every 2s
+    setInterval(() => {
+      const stops = [...this.positions.values()].map((p) => ({
+        symbol: p.symbol,
+        side: p.side,
+        activated: p.activated,
+        stopPrice: p.stopPrice,
+        entryPrice: p.entryPrice,
+        highWaterMark: p.highWaterMark,
+        lowWaterMark: p.lowWaterMark,
+        trailingPct: p.trailingPct,
+      }));
+      bus.emit("trailing:update", stops);
+    }, 2000);
+
     log.info(
       { trailingPct: this.defaultTrailingPct, activationPct: this.defaultActivationPct },
       "Trailing stop manager started",

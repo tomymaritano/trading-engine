@@ -11,7 +11,10 @@ import { RiskEngine } from "./risk/risk-engine.js";
 import { ExecutionEngine } from "./execution/execution-engine.js";
 import { PortfolioManager } from "./portfolio/portfolio-manager.js";
 import { TickStore } from "./storage/tick-store.js";
+import { DbStore } from "./storage/db-store.js";
+import { RedisState } from "./storage/redis-state.js";
 import { TerminalDashboard } from "./dashboard/terminal.js";
+import { discoverSymbols } from "./ingestion/symbol-discovery.js";
 import type { WsManager } from "./ingestion/ws-manager.js";
 import type { Exchange, MarketEvent } from "./types/market.js";
 
@@ -41,6 +44,8 @@ class TradingEngine {
   private executionEngine!: ExecutionEngine;
   private portfolioManager!: PortfolioManager;
   private tickStore!: TickStore;
+  private dbStore: DbStore | null = null;
+  private redisState: RedisState | null = null;
   private dashboard!: TerminalDashboard;
 
   constructor(private configOverrides?: Record<string, unknown>) {}
@@ -49,7 +54,19 @@ class TradingEngine {
     const config = loadConfig(this.configOverrides);
     const startTs = Date.now();
 
-    log.info({ env: config.env, symbols: config.symbols }, "Starting Trading Intelligence Engine");
+    // ── Discover symbols dynamically ─────────────────────────
+    if (config.symbols.length === 0 || process.env.DISCOVER_SYMBOLS === "true") {
+      const minVol = Number(process.env.MIN_VOLUME_24H) || 10_000_000;
+      const maxSymbols = Number(process.env.MAX_SYMBOLS) || 50;
+      const discovered = await discoverSymbols({
+        minVolume24h: minVol,
+        maxSymbols,
+        ...(config.symbols.length > 0 && { alwaysInclude: config.symbols }),
+      });
+      (config as any).symbols = discovered;
+    }
+
+    log.info({ env: config.env, symbolCount: config.symbols.length, symbols: config.symbols }, "Starting Trading Intelligence Engine");
 
     // ── Initialize layers ──────────────────────────────────────
     const exchanges: Exchange[] = [];
@@ -65,14 +82,20 @@ class TradingEngine {
         const exchange = name as Exchange;
         exchanges.push(exchange);
         const adapter = adapters[exchange];
-
-        const ws = adapter.createWsManager(config.symbols, (event: MarketEvent) => {
+        const onEvent = (_event: MarketEvent) => {
           // Events are already emitted to the bus by the adapter
-        });
+        };
 
-        this.wsManagers.push(ws);
-        ws.start();
-        log.info({ exchange }, "WebSocket manager started");
+        // Binance supports multi-connection splitting for many symbols
+        const managers = "createWsManagers" in adapter
+          ? (adapter as BinanceAdapter).createWsManagers(config.symbols, onEvent)
+          : [adapter.createWsManager(config.symbols, onEvent)];
+
+        for (const ws of managers) {
+          this.wsManagers.push(ws);
+          ws.start();
+        }
+        log.info({ exchange, connections: managers.length }, "WebSocket manager(s) started");
       }
     }
 
@@ -102,10 +125,20 @@ class TradingEngine {
     this.portfolioManager = new PortfolioManager(initialEquity);
     this.portfolioManager.start();
 
-    // ── Tick Store (persist all market events) ─────────────────
+    // ── Tick Store (file-based, always on as fallback) ─────────
     this.tickStore = new TickStore("data/ticks");
     this.tickStore.start();
     bus.on("market:event", (event) => this.tickStore.append(event));
+
+    // ── TimescaleDB (persistent storage) ─────────────────────
+    const dbUrl = process.env.DB_URL ?? config.db.url;
+    this.dbStore = new DbStore({ url: dbUrl });
+    await this.dbStore.start();
+
+    // ── Redis (real-time state) ──────────────────────────────
+    const redisUrl = process.env.REDIS_URL ?? config.redis.url;
+    this.redisState = new RedisState({ url: redisUrl });
+    await this.redisState.start();
 
     // ── Terminal Dashboard ──────────────────────────────────────
     if (process.stdout.isTTY && config.env !== "production") {
@@ -138,6 +171,8 @@ class TradingEngine {
     this.executionEngine?.stop();
     this.featureEngine?.stop();
     await this.tickStore?.stop();
+    await this.dbStore?.stop();
+    await this.redisState?.stop();
 
     for (const ws of this.wsManagers) {
       await ws.stop();
@@ -155,6 +190,8 @@ class TradingEngine {
         risk: this.riskEngine?.stats,
         execution: this.executionEngine?.stats,
         wsConnections: this.wsManagers.map((ws) => ws.stats),
+        db: this.dbStore?.stats,
+        redis: this.redisState?.stats,
       }, "Engine stats");
     }, 30_000);
   }
@@ -168,7 +205,9 @@ const engine = new TradingEngine({
     kraken: { enabled: false },
     okx: { enabled: false },
   },
-  symbols: ["BTC-USDT", "ETH-USDT"],
+  // Empty = discover all USDT pairs above MIN_VOLUME_24H from Binance API
+  // Set DISCOVER_SYMBOLS=true to force discovery even with symbols listed
+  symbols: [],
 });
 
 // Graceful shutdown

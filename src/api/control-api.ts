@@ -32,6 +32,7 @@ interface EngineControl {
   getStrategies: () => Array<{ name: string; enabled: boolean }>;
   getJournal: (limit: number) => unknown[];
   getActiveSymbols: () => string[];
+  queryDb?: (query: string, params?: Record<string, unknown>) => Promise<unknown>;
 }
 
 export function startControlApi(port: number, control: EngineControl): void {
@@ -164,6 +165,33 @@ export function startControlApi(port: number, control: EngineControl): void {
       // GET /api/history — accumulated state for dashboard restore on reload
       if (method === "GET" && url === "/api/history") {
         json(res, getStateHistory());
+        return;
+      }
+
+      // GET /api/strategy-stats?hours=24
+      if (method === "GET" && url.startsWith("/api/strategy-stats") && control.queryDb) {
+        const params = new URL(url, "http://localhost").searchParams;
+        const hours = Number(params.get("hours") ?? "24");
+        const rows = await control.queryDb("strategy-stats", { hours });
+        json(res, rows);
+        return;
+      }
+
+      // GET /api/portfolio-history?hours=24
+      if (method === "GET" && url.startsWith("/api/portfolio-history") && control.queryDb) {
+        const params = new URL(url, "http://localhost").searchParams;
+        const hours = Number(params.get("hours") ?? "24");
+        const rows = await control.queryDb("portfolio-history", { hours });
+        json(res, rows);
+        return;
+      }
+
+      // GET /api/order-history?limit=100
+      if (method === "GET" && url.startsWith("/api/order-history") && control.queryDb) {
+        const params = new URL(url, "http://localhost").searchParams;
+        const limit = Number(params.get("limit") ?? "100");
+        const rows = await control.queryDb("order-history", { limit });
+        json(res, rows);
         return;
       }
 

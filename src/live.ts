@@ -56,6 +56,7 @@ import { startControlApi } from "./api/control-api.js";
 import { TrailingStopManager } from "./execution/trailing-stop.js";
 import { TradeJournal } from "./audit/trade-journal.js";
 import { TelegramAlerts } from "./alerts/telegram.js";
+import { DbStore } from "./storage/db-store.js";
 import { loadUserSettings } from "./storage/user-settings.js";
 import { startStateHistory, addEquityPoint } from "./storage/state-history.js";
 import type { WsManager } from "./ingestion/ws-manager.js";
@@ -154,6 +155,11 @@ async function main(): Promise<void> {
     tickCount++;
   });
 
+  // ── TimescaleDB (persistent storage) ──────────────────────────
+  const dbUrl = process.env.DB_URL ?? "postgresql://trading:trading@localhost:5432/trading";
+  const dbStore = new DbStore({ url: dbUrl });
+  await dbStore.start();
+
   // ── Feature Engine ──────────────────────────────────────────────
   const featureEngine = new FeatureEngine(config, symbolList, exchangeList);
   featureEngine.start();
@@ -199,6 +205,19 @@ async function main(): Promise<void> {
   const portfolioManager = new PortfolioManager(initialEquity);
   portfolioManager.start();
 
+  // ── Portfolio Snapshots (persist to TimescaleDB every 30s) ─────
+  setInterval(() => {
+    const snap = portfolioManager.snapshot();
+    dbStore.appendPortfolioSnapshot({
+      equity: snap.equity.toNumber(),
+      cash: snap.cash.toNumber(),
+      unrealizedPnl: snap.totalUnrealizedPnl.toNumber(),
+      realizedPnl: snap.totalRealizedPnl.toNumber(),
+      positionCount: snap.positionCount,
+      drawdownPct: snap.equity.isZero() ? 0 : (1 - snap.equity.toNumber() / initialEquity),
+    });
+  }, 30_000);
+
   // ── Trailing Stops ─────────────────────────────────────────────
   const trailingStopManager = new TrailingStopManager(0.01, 0.005); // 1% trail, 0.5% activation
   trailingStopManager.start();
@@ -216,7 +235,7 @@ async function main(): Promise<void> {
   startMetricsServer(metricsPort);
 
   // ── Dashboard WebSocket Server ──────────────────────────────────
-  startDashboardServer(3001);
+  startDashboardServer(3003);
 
   // ── Control API (REST for dashboard) ──────────────────────────
   let activeRiskProfile = "moderate";
@@ -240,6 +259,7 @@ async function main(): Promise<void> {
     getStrategies: () => strategyOrchestrator.getStrategies(),
     getJournal: (limit) => tradeJournal.getRecent?.(limit) ?? [],
     getActiveSymbols: () => symbolList,
+    queryDb: (name, params) => dbStore.query(name, params),
   });
 
   // ── Terminal Dashboard ──────────────────────────────────────────
@@ -283,6 +303,7 @@ async function main(): Promise<void> {
     sentimentEngine.stop();
     mlBridge.stop();
     await tickStore.stop();
+    await dbStore.stop();
     for (const ws of wsManagers) await ws.stop();
     log.info({ totalTicks: tickCount }, "Shutdown complete");
     process.exit(0);

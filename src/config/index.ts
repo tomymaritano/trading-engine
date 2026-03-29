@@ -52,18 +52,21 @@ export const AppConfigSchema = z.object({
     }),
   }),
 
-  symbols: z.array(z.string()).default(["BTC-USDT", "ETH-USDT"]),
+  symbols: z.array(z.string()).default([
+    "BTC-USDT", "ETH-USDT", "SOL-USDT",
+    "DOGE-USDT", "PEPE-USDT", "SHIB-USDT",
+  ]),
 
   risk: RiskConfigSchema.default({}),
 
   strategies: z.array(StrategyConfigSchema).default([]),
 
   redis: z.object({
-    url: z.string().default("redis://localhost:6379"),
+    url: z.string().default(process.env.REDIS_URL ?? "redis://localhost:6379"),
   }).default({}),
 
   db: z.object({
-    url: z.string().default("postgresql://localhost:5432/trading"),
+    url: z.string().default(process.env.DB_URL ?? "postgresql://localhost:5432/trading"),
   }).default({}),
 
   features: z.object({

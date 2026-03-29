@@ -43,6 +43,10 @@ interface EventMap {
   "risk:circuit_breaker": (data: { reason: string; ts: number }) => void;
   "risk:kill_switch": (data: { reason: string; ts: number }) => void;
   "risk:warning": (data: { type: string; message: string }) => void;
+  "risk:decision": (data: { symbol: string; action: string; reason: string; explanation: string; matchedRule: string; confidence: number; direction: string }) => void;
+
+  // Execution events
+  "trailing:update": (stops: Array<{ symbol: string; side: string; activated: boolean; stopPrice: number; entryPrice: number; highWaterMark: number; lowWaterMark: number; trailingPct: number }>) => void;
 
   // System lifecycle
   "system:ready": () => void;

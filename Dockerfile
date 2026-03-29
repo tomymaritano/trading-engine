@@ -4,12 +4,12 @@ COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY src/ ./src/
-RUN npx tsup src/index.ts --format esm --dts --clean
+RUN npx tsup src/index.ts src/live.ts --format esm --dts --clean
 
 FROM node:22-alpine
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
-EXPOSE 9090
-CMD ["node", "dist/index.js"]
+EXPOSE 9090 3002 3003
+CMD ["node", "dist/live.js"]
